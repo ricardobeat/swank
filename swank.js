@@ -50,58 +50,49 @@ var serve = function(opts, callback){
     return;
   }
 
-  //defaults
-  var dir  = opts.path || __dirname; //default to CWD
-  var port = opts.port || process.env.PORT || 8000;
-  var host = (os.hostname()||'localhost');
-  var log  = (opts.log === undefined ? (opts.console ? true : false) : opts.log);
-  var liveReloadOpts = opts.liveReload || {};
-  liveReloadOpts.port = liveReloadOpts.port || 35729;
-
-  var ngrok = false;
-  var warning = null;
-  if(opts.ngrok){
-    try{
-      ngrok = require('ngrok');
-    }catch(err){
-      warning = 'ngrok is optional and not installed automatically. Run `npm install ngrok` to use this feature.';
-    }
-  }
-
   //start server
   var app = connect();
   if(log){
-    app.use(morgan('combined'));
+    
   }
   if(opts.watch){
-    app.use(liveReload(liveReloadOpts));                    //inject script into pages
-    tinylr().listen(liveReloadOpts.port, function (){        //start respond server
-      watch.watchTree(dir, function (f, curr, prev) {      //when a file changes, cause a reload
-        if (typeof f === 'object' && prev === null && curr === null) {
-         // Finished walking the tree
-        } else {
-          var liveReloadURL = url.format({
-            protocol: 'http',
-            hostname: host,
-            port: liveReloadOpts.port,
-            pathname: '/changed',
-            query: {files: f}
+
+    if(ngrok){ //open another tunnel to that port
+      ngrok.connect({port: liveReloadOpts.port}, function (err, server_url){
+        liveReloadOpts.hostname = url.parse(server_url).hostname;
+        liveReloadOpts.port     = url.parse(server_url).port;
+
+        app.use(liveReload(liveReloadOpts));                    //inject script into pages
+        tinylr().listen(liveReloadOpts.port, function (){        //start respond server
+          watch.watchTree(dir, function (f, curr, prev) {      //when a file changes, cause a reload
+            if (typeof f === 'object' && prev === null && curr === null) {
+             // Finished walking the tree
+            } else {
+              var liveReloadURL = url.format({
+                protocol: 'http',
+                hostname: host,
+                port: liveReloadOpts.port,
+                pathname: '/changed',
+                query: {files: f}
+              });
+              if(log){
+                console.log(("File changed: "+f).blue);
+              }
+              http.get(liveReloadURL);
+            }
           });
-          if(log){
-            console.log(("File changed: "+f).blue);
-          }
-          http.get(liveReloadURL);
-        }
+        });
       });
-    });
+    }else{
+
+    }
 
   }
-  app.use(serveStatic(dir));
-  http.createServer(app).listen(port);
+
 
   if(ngrok){
-    ngrok.connect({port: port}, function (err, url){
-      callback(err, warning, url);
+    ngrok.connect({port: port}, function (err, server_url){
+      callback(err, warning, server_url);
     });
   }else{
     callback(null, warning, url.format({
@@ -111,6 +102,76 @@ var serve = function(opts, callback){
     }));
   }
 };
+
+serve.app = conect();
+
+serve.setDefaults = function (opts, errs, callback){
+  //defaults
+  opts.path = opts.path || __dirname; //default to CWD
+  opts.port = opts.port || process.env.PORT || 8000;
+  opts.host = (os.hostname()||'localhost');
+  opts.log  = (opts.log === undefined ? (opts.console ? true : false) : opts.log);
+
+  opts.liveReload       = opts.liveReload || {};
+  opts.liveReload.port  = opts.liveReload.port || 35729;
+
+  if(opts.ngrok){
+    try{
+      opts.ngrok = require('ngrok');
+    }catch(err){
+      errs.push('ngrok is optional and not installed automatically. Run `npm install ngrok` to use this feature.');
+    }
+  }
+  callback(opts, errs);
+}
+
+serve.watch = function (opts, errs, callback){
+  app.use( liveReload(opts.liveReload) );                     //inject script into pages
+  tinylr().listen(opts.liveReload.port, function (){          //start respond server
+    watch.watchTree(dir, function (f, curr, prev) {           //when a file changes, cause a reload
+      if (typeof f === 'object' && prev === null && curr === null) {
+       callback(opts, errs);                                  // Finished walking the tree
+      } else {
+        var liveReloadURL = url.format({
+          protocol: 'http',
+          hostname: host,
+          port: liveReloadOpts.port,
+          pathname: '/changed',
+          query: {files: f}
+        });
+        if(opts.log){
+          console.log(("File changed: "+f).blue);
+        }
+        http.get(liveReloadURL);
+      }
+    });
+  });
+}
+
+serve.tunnel = function (opts, errs, callback){
+  if(!opts.ngrok){
+    callback(opts, errs);
+  }
+  opts.ngrok.connect({port: opts.port}, function (err, server_url){
+    if(err){
+      errs.push(err);
+      // otps.host = url
+      callback(opts, errs);
+    }
+  });
+}
+
+serve.add_logger = function (opts, errs, callback){
+  app.use(morgan('combined'));
+  callback(opts, errs);
+}
+
+serve.start = function (opts, callback){
+  serve.app.listen(opts.port);
+  app.use(serveStatic(dir));
+  http.createServer(app).listen(port);
+  callback(opts, []);
+}
 
 
 // run with command line arguments
